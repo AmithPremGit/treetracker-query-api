@@ -1,0 +1,8 @@
+apiVersion: getambassador.io/v2
+kind: Mapping
+metadata:
+  name: query-api-alpha              # unique name
+  namespace: webmap                  # same namespace as main
+spec:
+  prefix: /alpha/query               # public path
+  service: treetracker-query-api     # Service from base/

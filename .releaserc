@@ -1,5 +1,12 @@
 {
-  "branches": ["main"],
+  "branches": [
+    "main",
+    {
+      "name": "denormalized-test",
+      "channel": "alpha",
+      "prerelease": true
+    }
+],
   "plugins": [
       "@semantic-release/commit-analyzer",
       "@semantic-release/release-notes-generator",
