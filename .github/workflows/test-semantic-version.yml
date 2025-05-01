@@ -1,4 +1,4 @@
-name: Check Alpha Deployment Configuration
+name: Simulate Deployment
 
 on:
   workflow_dispatch:
@@ -7,114 +7,81 @@ on:
       - denormalized-test
 
 jobs:
-  check-config:
+  simulate-deployment:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
 
-      - name: Check directory structure
+      - name: Install kustomize
         run: |
-          echo "Checking deployment directories:"
-          if [ -d "deployment-alpha" ]; then
-            echo "✅ deployment-alpha directory exists"
-            echo "Contents:"
-            ls -la deployment-alpha/
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          chmod +x ./kustomize
+
+      - name: Build regular deployment
+        run: |
+          echo "Building regular deployment configuration:"
+          ./kustomize build deployment/base > regular_deployment.yaml
+          echo "Regular deployment configuration built successfully."
+
+      - name: Build alpha deployment
+        run: |
+          echo "Building alpha deployment configuration:"
+          ./kustomize build deployment-alpha/base > alpha_deployment.yaml
+          echo "Alpha deployment configuration built successfully."
+
+      - name: Extract mappings from configurations
+        run: |
+          echo "Extracting mappings from regular deployment:"
+          grep -A 15 "kind: Mapping" regular_deployment.yaml > regular_mapping.txt
+
+          echo "Extracting mappings from alpha deployment:"
+          grep -A 15 "kind: Mapping" alpha_deployment.yaml > alpha_mapping.txt
+
+          echo "Regular mapping:"
+          cat regular_mapping.txt
+
+          echo "Alpha mapping:"
+          cat alpha_mapping.txt
+
+      - name: Compare prefixes
+        run: |
+          # Extract prefixes
+          REGULAR_PREFIX=$(grep "prefix:" regular_mapping.txt | awk '{print $2}')
+          ALPHA_PREFIX=$(grep "prefix:" alpha_mapping.txt | awk '{print $2}')
+
+          echo "Regular deployment prefix: $REGULAR_PREFIX"
+          echo "Alpha deployment prefix: $ALPHA_PREFIX"
+
+          # Compare prefixes
+          if [ "$REGULAR_PREFIX" != "$ALPHA_PREFIX" ]; then
+            echo "✅ PASS: Deployments use different prefixes"
+            echo "Regular deployment will use: $REGULAR_PREFIX"
+            echo "Alpha deployment will use: $ALPHA_PREFIX"
+            echo "They will not conflict with each other."
           else
-            echo "❌ deployment-alpha directory missing"
+            echo "❌ FAIL: Both deployments use the same prefix: $REGULAR_PREFIX"
+            echo "This will cause conflicts - one deployment will override the other."
             exit 1
           fi
 
-          if [ -d "deployment" ]; then
-            echo "✅ Regular deployment directory exists"
-          else
-            echo "❌ Regular deployment directory missing"
-          fi
-
-      - name: Check mapping files
+      - name: Verify service names
         run: |
-          echo "Checking mapping configurations:"
+          # Extract service names
+          REGULAR_SERVICE=$(grep "service:" regular_mapping.txt | awk '{print $2}')
+          ALPHA_SERVICE=$(grep "service:" alpha_mapping.txt | awk '{print $2}')
 
-          # Check alpha mapping
-          if [ -f "deployment-alpha/base/mapping.yaml" ]; then
-            echo "Alpha mapping content:"
-            cat deployment-alpha/base/mapping.yaml
-            
-            if grep -q "/alpha/query" deployment-alpha/base/mapping.yaml; then
-              echo "✅ Alpha mapping uses correct path prefix"
-            else
-              echo "❌ Alpha mapping doesn't use /alpha/query path"
-            fi
-          else
-            echo "❌ Alpha mapping file not found"
-          fi
+          echo "Regular deployment service: $REGULAR_SERVICE"
+          echo "Alpha deployment service: $ALPHA_SERVICE"
 
-          # Check regular mapping
-          if [ -f "deployment/base/mapping.yaml" ]; then
-            echo "Regular mapping content:"
-            cat deployment/base/mapping.yaml
-            
-            if grep -q "/query" deployment/base/mapping.yaml && ! grep -q "/alpha/query" deployment/base/mapping.yaml; then
-              echo "✅ Regular mapping uses /query path and not /alpha/query"
-            else
-              echo "❌ Regular mapping path configuration issue"
-            fi
-          else
-            echo "❌ Regular mapping file not found"
-          fi
-
-      - name: Check workflow files
-        run: |
-          echo "Checking workflow files:"
-          if grep -r "deployment-alpha" .github/workflows/; then
-            echo "✅ Found workflow using deployment-alpha"
-            
-            # Get workflow file name
-            WORKFLOW_FILE=$(grep -l "deployment-alpha" .github/workflows/*.yml | head -1)
-            if [ ! -z "$WORKFLOW_FILE" ]; then
-              echo "Workflow file: $WORKFLOW_FILE"
-              
-              # Check if it's triggered by denormalized-test branch
-              if grep -q "denormalized-test" "$WORKFLOW_FILE"; then
-                echo "✅ Workflow is triggered by denormalized-test branch"
-              else
-                echo "❌ Workflow not triggered by denormalized-test branch"
-              fi
-            fi
-          else
-            echo "❌ No workflow found using deployment-alpha"
-          fi
-
-      - name: Check release configuration
-        run: |
-          echo "Checking release configuration:"
-          if [ -f ".releaserc" ]; then
-            echo "Release config content:"
-            cat .releaserc
-            
-            if grep -q "denormalized-test" .releaserc && grep -q "alpha" .releaserc; then
-              echo "✅ Release config includes denormalized-test branch with alpha channel"
-            else
-              echo "❌ Release config missing denormalized-test branch or alpha channel"
-            fi
-          elif [ -f ".releaserc.json" ]; then
-            echo "Release config content:"
-            cat .releaserc.json
-            
-            if grep -q "denormalized-test" .releaserc.json && grep -q "alpha" .releaserc.json; then
-              echo "✅ Release config includes denormalized-test branch with alpha channel"
-            else
-              echo "❌ Release config missing denormalized-test branch or alpha channel"
-            fi
-          else
-            echo "❌ No release config file found"
-          fi
+          # No need to compare - just informative
 
       - name: Summary
         run: |
-          echo "===== CONFIGURATION CHECK SUMMARY ====="
-          echo "1. deployment-alpha directory: $(if [ -d "deployment-alpha" ]; then echo '✅ PRESENT'; else echo '❌ MISSING'; fi)"
-          echo "2. Alpha mapping uses /alpha/query: $(if [ -f "deployment-alpha/base/mapping.yaml" ] && grep -q "/alpha/query" deployment-alpha/base/mapping.yaml; then echo '✅ CORRECT'; else echo '❌ INCORRECT'; fi)"
-          echo "3. Workflow for deployment-alpha: $(if grep -r "deployment-alpha" .github/workflows/; then echo '✅ PRESENT'; else echo '❌ MISSING'; fi)"
-          echo "4. Release config for denormalized-test: $(if ([ -f ".releaserc" ] && grep -q "denormalized-test" .releaserc) || ([ -f ".releaserc.json" ] && grep -q "denormalized-test" .releaserc.json); then echo '✅ PRESENT'; else echo '❌ MISSING'; fi)"
-          echo "======================================"
+          echo "====== DEPLOYMENT SIMULATION SUMMARY ======"
+          echo "1. Regular deployment built successfully from deployment/base"
+          echo "2. Alpha deployment built successfully from deployment-alpha/base"
+          echo "3. Regular deployment prefix: $(grep 'prefix:' regular_mapping.txt | awk '{print $2}')"
+          echo "4. Alpha deployment prefix: $(grep 'prefix:' alpha_mapping.txt | awk '{print $2}')"
+          echo "5. Services: Regular: $(grep 'service:' regular_mapping.txt | awk '{print $2}'), Alpha: $(grep 'service:' alpha_mapping.txt | awk '{print $2}')"
+          echo "CONCLUSION: The deployments $(if [ "$(grep 'prefix:' regular_mapping.txt | awk '{print $2}')" != "$(grep 'prefix:' alpha_mapping.txt | awk '{print $2}')" ]; then echo "WILL NOT conflict"; else echo "WILL conflict"; fi)"
