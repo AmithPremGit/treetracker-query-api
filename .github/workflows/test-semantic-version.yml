@@ -1,31 +1,97 @@
-name: Test Semantic Version for denormalized-test
+name: Test Channel-Based Configuration
 
 on:
   push:
     branches:
-      - denormalized-test
+      - '*' # Run on any branch push
 
 jobs:
-  test-version:
+  test-channel-config:
+    name: Test Channel and Deployment Configuration
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
         with:
-          fetch-depth: 0 # Important for semantic-release to analyze commit history
+          fetch-depth: 0
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v2
+      - name: Use Node.js 20.x
+        uses: actions/setup-node@v1
         with:
-          node-version: '18'
+          node-version: '20.x'
 
-      - name: Install semantic-release
-        run: npm install -g semantic-release @semantic-release/git @semantic-release/changelog
-
-      - name: Run semantic-release dry run
-        run: npx semantic-release --dry-run
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Check current package version
+      - name: Current branch info
         run: |
-          echo "Current package.json version: $(node -p "require('./package.json').version")"
+          echo "Current branch: ${{ github.ref_name }}"
+
+      - name: Check .releaserc.json configuration
+        run: |
+          echo "Content of .releaserc.json:"
+          cat .releaserc.json || cat .releaserc
+
+      - name: Determine channel from branch
+        id: channel_info
+        run: |
+          node -e '
+            try {
+              const branch = process.env.GITHUB_REF_NAME;
+              console.log(`Current branch: ${branch}`);
+              
+              const releaseJson = require("./.releaserc.json");
+              
+              // Find if branch is configured for release
+              const branchConfig = releaseJson.branches.find(b => {
+                if (typeof b === "string") return b === branch;
+                return b.name === branch;
+              });
+              
+              if (branchConfig) {
+                console.log(`Branch is configured for release: ${JSON.stringify(branchConfig, null, 2)}`);
+                
+                if (typeof branchConfig === "object") {
+                  console.log(`Channel: ${branchConfig.channel || "default"}`);
+                  console.log(`Prerelease: ${branchConfig.prerelease || "false"}`);
+                  console.log(`CHANNEL=${branchConfig.channel || "default"}`)
+                } else {
+                  console.log("Branch is a string in configuration");
+                  console.log(`CHANNEL=default`);
+                }
+              } else {
+                console.log("Branch is not configured for release");
+                console.log(`CHANNEL=none`);
+              }
+            } catch (e) {
+              console.error(`Error: ${e.message}`);
+              console.log(`CHANNEL=error`);
+            }
+          '
+
+      - name: Expected deployment directory
+        run: |
+          CHANNEL=$(node -e '
+            try {
+              const branch = process.env.GITHUB_REF_NAME;
+              const releaseJson = require("./.releaserc.json");
+              const branchConfig = releaseJson.branches.find(b => {
+                if (typeof b === "string") return b === branch;
+                return b.name === branch;
+              });
+              
+              if (branchConfig && typeof branchConfig === "object" && branchConfig.channel) {
+                console.log(`deployment-${branchConfig.channel}`);
+              } else {
+                console.log("deployment");
+              }
+            } catch (e) {
+              console.log("deployment");
+            }
+          ')
+
+          echo "Expected deployment directory: $CHANNEL"
+
+          if [ -d "$CHANNEL" ]; then
+            echo "✅ Deployment directory exists"
+            echo "Directory structure:"
+            ls -la $CHANNEL
+          else
+            echo "❌ Deployment directory does not exist"
+          fi
