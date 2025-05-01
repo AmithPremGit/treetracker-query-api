@@ -2,8 +2,6 @@
 
 set -e
 
-
-
 echo "Setting up Kind cluster with Ambassador API Gateway v1 for treetracker-query-api testing on M1 Mac"
 
 # Create a kind config file for M1 Mac compatibility
