@@ -23,10 +23,10 @@ jobs:
         run: |
           echo "Current branch: ${{ github.ref_name }}"
 
-      - name: Check .releaserc.json configuration
+      - name: Check .releaserc configuration
         run: |
-          echo "Content of .releaserc.json:"
-          cat .releaserc.json || cat .releaserc
+          echo "Content of .releaserc:"
+          cat .releaserc || cat .releaserc
 
       - name: Determine channel from branch
         id: channel_info
@@ -36,7 +36,7 @@ jobs:
               const branch = process.env.GITHUB_REF_NAME;
               console.log(`Current branch: ${branch}`);
               
-              const releaseJson = require("./.releaserc.json");
+              const releaseJson = require("./.releaserc");
               
               // Find if branch is configured for release
               const branchConfig = releaseJson.branches.find(b => {
