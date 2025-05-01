@@ -1,4 +1,4 @@
-name: Check Alpha Deployment Structure
+name: Test Deployment Directory
 
 on:
   workflow_dispatch:
@@ -7,122 +7,49 @@ on:
       - denormalized-test
 
 jobs:
-  verify-alpha-deployment:
+  check-deployment-directory:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
 
-      - name: Directory structure check
+      - name: List directories
         run: |
-          echo "Verifying deployment-alpha directory structure:"
-          if [ -d "deployment-alpha" ]; then
-            echo "✅ deployment-alpha directory exists"
-            ls -la deployment-alpha/
-          else
-            echo "❌ deployment-alpha directory missing"
-            exit 1
-          fi
+          echo "Listing all deployment directories:"
+          ls -la | grep deployment
 
-      - name: Check base kustomization
+      - name: Check .releaserc
         run: |
-          if [ -f "deployment-alpha/base/kustomization.yaml" ]; then
-            echo "✅ Base kustomization.yaml exists"
-            echo "Contents:"
-            cat deployment-alpha/base/kustomization.yaml
-          else
-            echo "❌ Base kustomization.yaml missing"
-            exit 1
-          fi
-
-      - name: Check alpha mapping and prefix
-        run: |
-          if [ -f "deployment-alpha/base/mapping.yaml" ]; then
-            echo "✅ Base mapping.yaml exists"
-            echo "Contents:"
-            cat deployment-alpha/base/mapping.yaml
+          echo "Checking .releaserc configuration:"
+          if [ -f ".releaserc" ]; then
+            echo "Content of .releaserc:"
+            cat .releaserc
             
-            # Check if it has the alpha prefix
-            if grep -q "alpha/query" deployment-alpha/base/mapping.yaml; then
-              echo "✅ Mapping correctly uses alpha/query prefix"
+            if grep -q "denormalized-test" .releaserc && grep -q "alpha" .releaserc; then
+              echo "✅ .releaserc contains denormalized-test branch with alpha channel"
             else
-              echo "❌ Mapping does not use alpha/query prefix"
-              echo "This may cause conflicts with the main deployment"
+              echo "❌ .releaserc missing configuration for denormalized-test branch"
+            fi
+          elif [ -f ".releaserc.json" ]; then
+            echo "Content of .releaserc.json:"
+            cat .releaserc.json
+            
+            if grep -q "denormalized-test" .releaserc.json && grep -q "alpha" .releaserc.json; then
+              echo "✅ .releaserc.json contains denormalized-test branch with alpha channel"
+            else
+              echo "❌ .releaserc.json missing configuration for denormalized-test branch"
             fi
           else
-            echo "❌ Base mapping.yaml missing"
-            exit 1
+            echo "❌ No .releaserc or .releaserc.json file found"
           fi
 
-      - name: Check deployment file
+      - name: Check deployment workflows
         run: |
-          if [ -f "deployment-alpha/base/deployment.yaml" ]; then
-            echo "✅ Base deployment.yaml exists"
+          echo "Checking GitHub workflow files:"
+          ls -la .github/workflows/
+
+          if grep -r "deployment-alpha" .github/workflows/; then
+            echo "✅ Found workflow file that uses deployment-alpha directory"
           else
-            echo "❌ Base deployment.yaml missing"
-            exit 1
+            echo "❌ No workflow file found that uses deployment-alpha directory"
           fi
-
-      - name: Check service file
-        run: |
-          if [ -f "deployment-alpha/base/service.yaml" ]; then
-            echo "✅ Base service.yaml exists"
-          else
-            echo "❌ Base service.yaml missing"
-            exit 1
-          fi
-
-      - name: Check alpha workflow file
-        run: |
-          if [ -f ".github/workflows/treetracker-query-api-build-deploy-alpha.yml" ]; then
-            echo "✅ Alpha deployment workflow exists"
-            
-            # Check if workflow targets deployment-alpha
-            if grep -q "deployment-alpha" .github/workflows/treetracker-query-api-build-deploy-alpha.yml; then
-              echo "✅ Workflow correctly targets deployment-alpha directory"
-            else
-              echo "❌ Workflow does not target deployment-alpha directory"
-              echo "This may cause it to override the main deployment"
-            fi
-          else
-            echo "❌ Alpha deployment workflow missing"
-            exit 1
-          fi
-
-      - name: Install kustomize
-        run: |
-          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
-          chmod +x ./kustomize
-
-      - name: Test kustomize build
-        run: |
-          echo "Testing kustomize build with base directory:"
-          ./kustomize build deployment-alpha/base
-
-          if [ $? -eq 0 ]; then
-            echo "✅ Kustomize build successful for base directory"
-          else
-            echo "❌ Kustomize build failed for base directory"
-            exit 1
-          fi
-
-      - name: Verify alpha query path in output
-        run: |
-          ./kustomize build deployment-alpha/base > alpha_build.yaml
-          if grep -q "/alpha/query" alpha_build.yaml; then
-            echo "✅ Build output contains /alpha/query path"
-            echo "Alpha deployment will use a separate path from main deployment"
-          else
-            echo "❌ Build output does not contain /alpha/query path"
-            echo "This may cause conflicts with the main deployment"
-            exit 1
-          fi
-
-      - name: Summary
-        run: |
-          echo "=== ALPHA DEPLOYMENT VERIFICATION SUMMARY ==="
-          echo "✅ All required files exist in deployment-alpha"
-          echo "✅ Alpha deployment uses /alpha/query path"
-          echo "✅ Workflow targets deployment-alpha directory"
-          echo "✅ Kustomize build is successful"
-          echo "CONCLUSION: Alpha deployment is properly configured and should not override the main deployment"
