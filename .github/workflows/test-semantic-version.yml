@@ -1,4 +1,4 @@
-name: Simulate Deployment
+name: Verify Alpha Deployment Configuration
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ on:
       - denormalized-test
 
 jobs:
-  simulate-deployment:
+  verify-deployment:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -18,37 +18,35 @@ jobs:
           curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
           chmod +x ./kustomize
 
-      - name: Build regular deployment
+      - name: Build regular deployment with overlay
         run: |
-          echo "Building regular deployment configuration:"
-          ./kustomize build deployment/base > regular_deployment.yaml
+          echo "Building regular deployment configuration with development overlay:"
+          ./kustomize build deployment/overlays/development > regular_deployment.yaml
           echo "Regular deployment configuration built successfully."
 
-      - name: Build alpha deployment
+      - name: Build alpha deployment with overlay
         run: |
-          echo "Building alpha deployment configuration:"
-          ./kustomize build deployment-alpha/base > alpha_deployment.yaml
+          echo "Building alpha deployment configuration with development overlay:"
+          ./kustomize build deployment-alpha/overlays/development > alpha_deployment.yaml
           echo "Alpha deployment configuration built successfully."
 
       - name: Extract mappings from configurations
         run: |
-          echo "Extracting mappings from regular deployment:"
-          grep -A 15 "kind: Mapping" regular_deployment.yaml > regular_mapping.txt
+          echo "=== Regular Deployment Mappings ==="
+          grep -A 20 "kind: Mapping" regular_deployment.yaml
 
-          echo "Extracting mappings from alpha deployment:"
-          grep -A 15 "kind: Mapping" alpha_deployment.yaml > alpha_mapping.txt
+          echo "=== Alpha Deployment Mappings ==="
+          grep -A 20 "kind: Mapping" alpha_deployment.yaml
 
-          echo "Regular mapping:"
-          cat regular_mapping.txt
+          # Save mappings to files for analysis
+          grep -A 20 "kind: Mapping" regular_deployment.yaml > regular_mappings.txt
+          grep -A 20 "kind: Mapping" alpha_deployment.yaml > alpha_mappings.txt
 
-          echo "Alpha mapping:"
-          cat alpha_mapping.txt
-
-      - name: Compare prefixes
+      - name: Extract and verify prefixes
         run: |
-          # Extract prefixes
-          REGULAR_PREFIX=$(grep "prefix:" regular_mapping.txt | awk '{print $2}')
-          ALPHA_PREFIX=$(grep "prefix:" alpha_mapping.txt | awk '{print $2}')
+          # Extract prefixes from mappings
+          REGULAR_PREFIX=$(grep "prefix:" regular_mappings.txt | head -1 | awk '{print $2}')
+          ALPHA_PREFIX=$(grep "prefix:" alpha_mappings.txt | head -1 | awk '{print $2}')
 
           echo "Regular deployment prefix: $REGULAR_PREFIX"
           echo "Alpha deployment prefix: $ALPHA_PREFIX"
@@ -68,20 +66,63 @@ jobs:
       - name: Verify service names
         run: |
           # Extract service names
-          REGULAR_SERVICE=$(grep "service:" regular_mapping.txt | awk '{print $2}')
-          ALPHA_SERVICE=$(grep "service:" alpha_mapping.txt | awk '{print $2}')
+          REGULAR_SERVICE=$(grep "service:" regular_mappings.txt | head -1 | awk '{print $2}')
+          ALPHA_SERVICE=$(grep "service:" alpha_mappings.txt | head -1 | awk '{print $2}')
 
           echo "Regular deployment service: $REGULAR_SERVICE"
           echo "Alpha deployment service: $ALPHA_SERVICE"
 
-          # No need to compare - just informative
+          # Check if services are appropriately named
+          if [[ "$REGULAR_SERVICE" == *"main"* ]] || [[ "$ALPHA_SERVICE" == *"alpha"* ]]; then
+            echo "✅ PASS: Service names follow appropriate naming convention"
+          else
+            echo "⚠️ WARNING: Service names might not follow the expected naming convention"
+            echo "This is not a failure but consider reviewing service naming."
+          fi
+
+      - name: Check for host conflicts
+        run: |
+          # Extract host values if present
+          REGULAR_HOST=$(grep "host:" regular_mappings.txt | head -1 | awk '{print $2}' || echo "not-specified")
+          ALPHA_HOST=$(grep "host:" alpha_mappings.txt | head -1 | awk '{print $2}' || echo "not-specified")
+
+          if [ "$REGULAR_HOST" != "not-specified" ] && [ "$ALPHA_HOST" != "not-specified" ]; then
+            if [ "$REGULAR_HOST" != "$ALPHA_HOST" ]; then
+              echo "✅ PASS: Deployments use different hosts"
+            else
+              echo "⚠️ WARNING: Both deployments use the same host: $REGULAR_HOST"
+              echo "This might cause conflicts if prefixes overlap."
+            fi
+          else
+            echo "ℹ️ INFO: Host not specified for one or both deployments."
+          fi
+
+      - name: Verify CORS configurations
+        run: |
+          # Check if CORS is configured
+          if grep -q "cors:" regular_mappings.txt; then
+            echo "✅ Regular deployment has CORS configuration"
+          else
+            echo "⚠️ WARNING: Regular deployment is missing CORS configuration"
+          fi
+
+          if grep -q "cors:" alpha_mappings.txt; then
+            echo "✅ Alpha deployment has CORS configuration"
+          else
+            echo "⚠️ WARNING: Alpha deployment may be missing CORS configuration"
+          fi
 
       - name: Summary
         run: |
-          echo "====== DEPLOYMENT SIMULATION SUMMARY ======"
-          echo "1. Regular deployment built successfully from deployment/base"
-          echo "2. Alpha deployment built successfully from deployment-alpha/base"
-          echo "3. Regular deployment prefix: $(grep 'prefix:' regular_mapping.txt | awk '{print $2}')"
-          echo "4. Alpha deployment prefix: $(grep 'prefix:' alpha_mapping.txt | awk '{print $2}')"
-          echo "5. Services: Regular: $(grep 'service:' regular_mapping.txt | awk '{print $2}'), Alpha: $(grep 'service:' alpha_mapping.txt | awk '{print $2}')"
-          echo "CONCLUSION: The deployments $(if [ "$(grep 'prefix:' regular_mapping.txt | awk '{print $2}')" != "$(grep 'prefix:' alpha_mapping.txt | awk '{print $2}')" ]; then echo "WILL NOT conflict"; else echo "WILL conflict"; fi)"
+          echo "====== DEPLOYMENT CONFIGURATION VERIFICATION SUMMARY ======"
+          echo "1. Regular deployment (overlays/development): $(grep 'prefix:' regular_mappings.txt | head -1 | awk '{print $2}')"
+          echo "2. Alpha deployment (overlays/development): $(grep 'prefix:' alpha_mappings.txt | head -1 | awk '{print $2}')"
+          echo "3. Services: Regular: $(grep 'service:' regular_mappings.txt | head -1 | awk '{print $2}'), Alpha: $(grep 'service:' alpha_mappings.txt | head -1 | awk '{print $2}')"
+
+          # Final verdict
+          if [ "$(grep 'prefix:' regular_mappings.txt | head -1 | awk '{print $2}')" != "$(grep 'prefix:' alpha_mappings.txt | head -1 | awk '{print $2}')" ]; then
+            echo "✅ FINAL VERDICT: Deployments WILL NOT conflict"
+          else
+            echo "❌ FINAL VERDICT: Deployments WILL conflict"
+            exit 1
+          fi
