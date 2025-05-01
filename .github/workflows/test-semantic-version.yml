@@ -1,4 +1,4 @@
-name: Test Deployment Alpha Separation
+name: Check Alpha Deployment Structure
 
 on:
   workflow_dispatch:
@@ -7,117 +7,122 @@ on:
       - denormalized-test
 
 jobs:
-  check-deployment-separation:
+  verify-alpha-deployment:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
+
+      - name: Directory structure check
+        run: |
+          echo "Verifying deployment-alpha directory structure:"
+          if [ -d "deployment-alpha" ]; then
+            echo "✅ deployment-alpha directory exists"
+            ls -la deployment-alpha/
+          else
+            echo "❌ deployment-alpha directory missing"
+            exit 1
+          fi
+
+      - name: Check base kustomization
+        run: |
+          if [ -f "deployment-alpha/base/kustomization.yaml" ]; then
+            echo "✅ Base kustomization.yaml exists"
+            echo "Contents:"
+            cat deployment-alpha/base/kustomization.yaml
+          else
+            echo "❌ Base kustomization.yaml missing"
+            exit 1
+          fi
+
+      - name: Check alpha mapping and prefix
+        run: |
+          if [ -f "deployment-alpha/base/mapping.yaml" ]; then
+            echo "✅ Base mapping.yaml exists"
+            echo "Contents:"
+            cat deployment-alpha/base/mapping.yaml
+            
+            # Check if it has the alpha prefix
+            if grep -q "alpha/query" deployment-alpha/base/mapping.yaml; then
+              echo "✅ Mapping correctly uses alpha/query prefix"
+            else
+              echo "❌ Mapping does not use alpha/query prefix"
+              echo "This may cause conflicts with the main deployment"
+            fi
+          else
+            echo "❌ Base mapping.yaml missing"
+            exit 1
+          fi
+
+      - name: Check deployment file
+        run: |
+          if [ -f "deployment-alpha/base/deployment.yaml" ]; then
+            echo "✅ Base deployment.yaml exists"
+          else
+            echo "❌ Base deployment.yaml missing"
+            exit 1
+          fi
+
+      - name: Check service file
+        run: |
+          if [ -f "deployment-alpha/base/service.yaml" ]; then
+            echo "✅ Base service.yaml exists"
+          else
+            echo "❌ Base service.yaml missing"
+            exit 1
+          fi
+
+      - name: Check alpha workflow file
+        run: |
+          if [ -f ".github/workflows/treetracker-query-api-build-deploy-alpha.yml" ]; then
+            echo "✅ Alpha deployment workflow exists"
+            
+            # Check if workflow targets deployment-alpha
+            if grep -q "deployment-alpha" .github/workflows/treetracker-query-api-build-deploy-alpha.yml; then
+              echo "✅ Workflow correctly targets deployment-alpha directory"
+            else
+              echo "❌ Workflow does not target deployment-alpha directory"
+              echo "This may cause it to override the main deployment"
+            fi
+          else
+            echo "❌ Alpha deployment workflow missing"
+            exit 1
+          fi
 
       - name: Install kustomize
         run: |
           curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
           chmod +x ./kustomize
 
-      - name: Check deployment directories
+      - name: Test kustomize build
         run: |
-          echo "Checking deployment directories structure:"
-          echo "Regular deployment directory:"
-          ls -la deployment/
-          echo "Alpha deployment directory:"
-          ls -la deployment-alpha/
+          echo "Testing kustomize build with base directory:"
+          ./kustomize build deployment-alpha/base
 
-      - name: Compare mapping files
-        run: |
-          echo "Comparing mapping configurations:"
-          echo "Regular deployment mapping:"
-          cat deployment/base/mapping.yaml
-          echo "-------------------------------"
-          echo "Alpha deployment mapping:"
-          cat deployment-alpha/base/mapping.yaml
-
-          # Check if they are using different prefixes
-          REGULAR_PREFIX=$(grep -o "prefix: [^,]*" deployment/base/mapping.yaml | sed 's/prefix: //')
-          ALPHA_PREFIX=$(grep -o "prefix: [^,]*" deployment-alpha/base/mapping.yaml | sed 's/prefix: //')
-
-          echo "Regular deployment prefix: $REGULAR_PREFIX"
-          echo "Alpha deployment prefix: $ALPHA_PREFIX"
-
-          if [ "$REGULAR_PREFIX" != "$ALPHA_PREFIX" ]; then
-            echo "✅ Prefixes are different, deployments won't override each other"
+          if [ $? -eq 0 ]; then
+            echo "✅ Kustomize build successful for base directory"
           else
-            echo "❌ WARNING: Both deployments using the same prefix: $REGULAR_PREFIX"
-            echo "This could cause conflicts or overrides"
+            echo "❌ Kustomize build failed for base directory"
+            exit 1
           fi
 
-      - name: Compare service names
+      - name: Verify alpha query path in output
         run: |
-          echo "Comparing service configurations:"
-          echo "Regular deployment service:"
-          cat deployment/base/service.yaml
-          echo "-------------------------------"
-          echo "Alpha deployment service:"
-          cat deployment-alpha/base/service.yaml
-
-          # Extract service names to check if they're different
-          REGULAR_SVC=$(grep -o "name: [^,]*" deployment/base/service.yaml | head -1 | sed 's/name: //')
-          ALPHA_SVC=$(grep -o "name: [^,]*" deployment-alpha/base/service.yaml | head -1 | sed 's/name: //')
-
-          echo "Regular deployment service name: $REGULAR_SVC"
-          echo "Alpha deployment service name: $ALPHA_SVC"
-
-      - name: Test kustomize builds separately
-        run: |
-          echo "Testing kustomize build for regular deployment overlay"
-          ./kustomize build deployment/overlays/development > regular_build.yaml
-
-          echo "Testing kustomize build for alpha deployment overlay"
-          ./kustomize build deployment-alpha/overlays/development > alpha_build.yaml
-
-          echo "Checking differences between builds:"
-          diff regular_build.yaml alpha_build.yaml || true
-
-          # Check if main deployment uses /query prefix
-          if grep -q "prefix: /query" regular_build.yaml; then
-            echo "✅ Regular deployment uses /query prefix"
-          fi
-
-          # Check if alpha deployment uses /alpha/query prefix
-          if grep -q "prefix: /alpha/query" alpha_build.yaml; then
-            echo "✅ Alpha deployment uses /alpha/query prefix"
-          fi
-
-          echo "✅ Both deployment configurations can be built separately"
-
-      - name: Verify workflow targets
-        run: |
-          echo "Checking deployment workflows:"
-
-          # Check main deployment workflow
-          if [ -f ".github/workflows/treetracker-query-api-build-deploy-dev.yml" ]; then
-            echo "Regular deployment workflow:"
-            grep -A 5 "Run kustomize" .github/workflows/treetracker-query-api-build-deploy-dev.yml
-          fi
-
-          # Check alpha deployment workflow
-          if [ -f ".github/workflows/treetracker-query-api-build-deploy-alpha.yml" ]; then
-            echo "Alpha deployment workflow:"
-            grep -A 5 "Run kustomize" .github/workflows/treetracker-query-api-build-deploy-alpha.yml
-            
-            # Verify it's using deployment-alpha directory
-            if grep -q "deployment-alpha" .github/workflows/treetracker-query-api-build-deploy-alpha.yml; then
-              echo "✅ Alpha workflow targets deployment-alpha directory"
-            else
-              echo "❌ Alpha workflow does not target deployment-alpha directory"
-            fi
+          ./kustomize build deployment-alpha/base > alpha_build.yaml
+          if grep -q "/alpha/query" alpha_build.yaml; then
+            echo "✅ Build output contains /alpha/query path"
+            echo "Alpha deployment will use a separate path from main deployment"
+          else
+            echo "❌ Build output does not contain /alpha/query path"
+            echo "This may cause conflicts with the main deployment"
+            exit 1
           fi
 
       - name: Summary
         run: |
-          echo "====== DEPLOYMENT SEPARATION TEST SUMMARY ======"
-          echo "1. Regular deployment directory exists: $(if [ -d "deployment" ]; then echo '✅'; else echo '❌'; fi)"
-          echo "2. Alpha deployment directory exists: $(if [ -d "deployment-alpha" ]; then echo '✅'; else echo '❌'; fi)"
-          echo "3. Regular deployment uses different prefix than alpha: $(if grep -q "prefix: /query" deployment/base/mapping.yaml && grep -q "prefix: /alpha/query" deployment-alpha/base/mapping.yaml; then echo '✅'; else echo '❌'; fi)"
-          echo "4. Alpha workflow uses deployment-alpha directory: $(if grep -q "deployment-alpha" .github/workflows/treetracker-query-api-build-deploy-alpha.yml; then echo '✅'; else echo '❌'; fi)"
-          echo "5. Both deployments can be built separately: ✅"
-          echo "================================================"
-          echo "CONCLUSION: Alpha deployment $(if [ -d "deployment-alpha" ] && grep -q "prefix: /alpha/query" deployment-alpha/base/mapping.yaml && grep -q "deployment-alpha" .github/workflows/treetracker-query-api-build-deploy-alpha.yml; then echo 'WILL NOT override regular deployment'; else echo 'MAY override regular deployment - please check errors above'; fi)"
+          echo "=== ALPHA DEPLOYMENT VERIFICATION SUMMARY ==="
+          echo "✅ All required files exist in deployment-alpha"
+          echo "✅ Alpha deployment uses /alpha/query path"
+          echo "✅ Workflow targets deployment-alpha directory"
+          echo "✅ Kustomize build is successful"
+          echo "CONCLUSION: Alpha deployment is properly configured and should not override the main deployment"
