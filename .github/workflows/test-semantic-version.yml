@@ -1,4 +1,4 @@
-name: Test Deployment Directory
+name: Check Alpha Deployment Configuration
 
 on:
   workflow_dispatch:
@@ -7,49 +7,114 @@ on:
       - denormalized-test
 
 jobs:
-  check-deployment-directory:
+  check-config:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
 
-      - name: List directories
+      - name: Check directory structure
         run: |
-          echo "Listing all deployment directories:"
-          ls -la | grep deployment
+          echo "Checking deployment directories:"
+          if [ -d "deployment-alpha" ]; then
+            echo "✅ deployment-alpha directory exists"
+            echo "Contents:"
+            ls -la deployment-alpha/
+          else
+            echo "❌ deployment-alpha directory missing"
+            exit 1
+          fi
 
-      - name: Check .releaserc
+          if [ -d "deployment" ]; then
+            echo "✅ Regular deployment directory exists"
+          else
+            echo "❌ Regular deployment directory missing"
+          fi
+
+      - name: Check mapping files
         run: |
-          echo "Checking .releaserc configuration:"
+          echo "Checking mapping configurations:"
+
+          # Check alpha mapping
+          if [ -f "deployment-alpha/base/mapping.yaml" ]; then
+            echo "Alpha mapping content:"
+            cat deployment-alpha/base/mapping.yaml
+            
+            if grep -q "/alpha/query" deployment-alpha/base/mapping.yaml; then
+              echo "✅ Alpha mapping uses correct path prefix"
+            else
+              echo "❌ Alpha mapping doesn't use /alpha/query path"
+            fi
+          else
+            echo "❌ Alpha mapping file not found"
+          fi
+
+          # Check regular mapping
+          if [ -f "deployment/base/mapping.yaml" ]; then
+            echo "Regular mapping content:"
+            cat deployment/base/mapping.yaml
+            
+            if grep -q "/query" deployment/base/mapping.yaml && ! grep -q "/alpha/query" deployment/base/mapping.yaml; then
+              echo "✅ Regular mapping uses /query path and not /alpha/query"
+            else
+              echo "❌ Regular mapping path configuration issue"
+            fi
+          else
+            echo "❌ Regular mapping file not found"
+          fi
+
+      - name: Check workflow files
+        run: |
+          echo "Checking workflow files:"
+          if grep -r "deployment-alpha" .github/workflows/; then
+            echo "✅ Found workflow using deployment-alpha"
+            
+            # Get workflow file name
+            WORKFLOW_FILE=$(grep -l "deployment-alpha" .github/workflows/*.yml | head -1)
+            if [ ! -z "$WORKFLOW_FILE" ]; then
+              echo "Workflow file: $WORKFLOW_FILE"
+              
+              # Check if it's triggered by denormalized-test branch
+              if grep -q "denormalized-test" "$WORKFLOW_FILE"; then
+                echo "✅ Workflow is triggered by denormalized-test branch"
+              else
+                echo "❌ Workflow not triggered by denormalized-test branch"
+              fi
+            fi
+          else
+            echo "❌ No workflow found using deployment-alpha"
+          fi
+
+      - name: Check release configuration
+        run: |
+          echo "Checking release configuration:"
           if [ -f ".releaserc" ]; then
-            echo "Content of .releaserc:"
+            echo "Release config content:"
             cat .releaserc
             
             if grep -q "denormalized-test" .releaserc && grep -q "alpha" .releaserc; then
-              echo "✅ .releaserc contains denormalized-test branch with alpha channel"
+              echo "✅ Release config includes denormalized-test branch with alpha channel"
             else
-              echo "❌ .releaserc missing configuration for denormalized-test branch"
+              echo "❌ Release config missing denormalized-test branch or alpha channel"
             fi
           elif [ -f ".releaserc.json" ]; then
-            echo "Content of .releaserc.json:"
+            echo "Release config content:"
             cat .releaserc.json
             
             if grep -q "denormalized-test" .releaserc.json && grep -q "alpha" .releaserc.json; then
-              echo "✅ .releaserc.json contains denormalized-test branch with alpha channel"
+              echo "✅ Release config includes denormalized-test branch with alpha channel"
             else
-              echo "❌ .releaserc.json missing configuration for denormalized-test branch"
+              echo "❌ Release config missing denormalized-test branch or alpha channel"
             fi
           else
-            echo "❌ No .releaserc or .releaserc.json file found"
+            echo "❌ No release config file found"
           fi
 
-      - name: Check deployment workflows
+      - name: Summary
         run: |
-          echo "Checking GitHub workflow files:"
-          ls -la .github/workflows/
-
-          if grep -r "deployment-alpha" .github/workflows/; then
-            echo "✅ Found workflow file that uses deployment-alpha directory"
-          else
-            echo "❌ No workflow file found that uses deployment-alpha directory"
-          fi
+          echo "===== CONFIGURATION CHECK SUMMARY ====="
+          echo "1. deployment-alpha directory: $(if [ -d "deployment-alpha" ]; then echo '✅ PRESENT'; else echo '❌ MISSING'; fi)"
+          echo "2. Alpha mapping uses /alpha/query: $(if [ -f "deployment-alpha/base/mapping.yaml" ] && grep -q "/alpha/query" deployment-alpha/base/mapping.yaml; then echo '✅ CORRECT'; else echo '❌ INCORRECT'; fi)"
+          echo "3. Workflow for deployment-alpha: $(if grep -r "deployment-alpha" .github/workflows/; then echo '✅ PRESENT'; else echo '❌ MISSING'; fi)"
+          echo "4. Release config for denormalized-test: $(if ([ -f ".releaserc" ] && grep -q "denormalized-test" .releaserc) || ([ -f ".releaserc.json" ] && grep -q "denormalized-test" .releaserc.json); then echo '✅ PRESENT'; else echo '❌ MISSING'; fi)"
+          echo "======================================"
