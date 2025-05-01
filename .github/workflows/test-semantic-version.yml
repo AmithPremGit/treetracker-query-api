@@ -1,26 +1,123 @@
-name: Test Semantic Version
+name: Test Deployment Alpha Separation
 
 on:
+  workflow_dispatch:
   push:
     branches:
-      - '*'
+      - denormalized-test
 
 jobs:
-  check-files:
+  check-deployment-separation:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - name: Checkout code
+        uses: actions/checkout@v2
 
-      - name: Check for config file
+      - name: Install kustomize
         run: |
-          if [ -f ".releaserc" ]; then
-            echo "Found .releaserc"
-            cat .releaserc
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          chmod +x ./kustomize
+
+      - name: Check deployment directories
+        run: |
+          echo "Checking deployment directories structure:"
+          echo "Regular deployment directory:"
+          ls -la deployment/
+          echo "Alpha deployment directory:"
+          ls -la deployment-alpha/
+
+      - name: Compare mapping files
+        run: |
+          echo "Comparing mapping configurations:"
+          echo "Regular deployment mapping:"
+          cat deployment/base/mapping.yaml
+          echo "-------------------------------"
+          echo "Alpha deployment mapping:"
+          cat deployment-alpha/base/mapping.yaml
+
+          # Check if they are using different prefixes
+          REGULAR_PREFIX=$(grep -o "prefix: [^,]*" deployment/base/mapping.yaml | sed 's/prefix: //')
+          ALPHA_PREFIX=$(grep -o "prefix: [^,]*" deployment-alpha/base/mapping.yaml | sed 's/prefix: //')
+
+          echo "Regular deployment prefix: $REGULAR_PREFIX"
+          echo "Alpha deployment prefix: $ALPHA_PREFIX"
+
+          if [ "$REGULAR_PREFIX" != "$ALPHA_PREFIX" ]; then
+            echo "✅ Prefixes are different, deployments won't override each other"
           else
-            echo "No config file found"
+            echo "❌ WARNING: Both deployments using the same prefix: $REGULAR_PREFIX"
+            echo "This could cause conflicts or overrides"
           fi
 
-      - name: Check for deployment directories
+      - name: Compare service names
         run: |
-          echo "Checking deployment directories:"
-          ls -la | grep deployment
+          echo "Comparing service configurations:"
+          echo "Regular deployment service:"
+          cat deployment/base/service.yaml
+          echo "-------------------------------"
+          echo "Alpha deployment service:"
+          cat deployment-alpha/base/service.yaml
+
+          # Extract service names to check if they're different
+          REGULAR_SVC=$(grep -o "name: [^,]*" deployment/base/service.yaml | head -1 | sed 's/name: //')
+          ALPHA_SVC=$(grep -o "name: [^,]*" deployment-alpha/base/service.yaml | head -1 | sed 's/name: //')
+
+          echo "Regular deployment service name: $REGULAR_SVC"
+          echo "Alpha deployment service name: $ALPHA_SVC"
+
+      - name: Test kustomize builds separately
+        run: |
+          echo "Testing kustomize build for regular deployment overlay"
+          ./kustomize build deployment/overlays/development > regular_build.yaml
+
+          echo "Testing kustomize build for alpha deployment overlay"
+          ./kustomize build deployment-alpha/overlays/development > alpha_build.yaml
+
+          echo "Checking differences between builds:"
+          diff regular_build.yaml alpha_build.yaml || true
+
+          # Check if main deployment uses /query prefix
+          if grep -q "prefix: /query" regular_build.yaml; then
+            echo "✅ Regular deployment uses /query prefix"
+          fi
+
+          # Check if alpha deployment uses /alpha/query prefix
+          if grep -q "prefix: /alpha/query" alpha_build.yaml; then
+            echo "✅ Alpha deployment uses /alpha/query prefix"
+          fi
+
+          echo "✅ Both deployment configurations can be built separately"
+
+      - name: Verify workflow targets
+        run: |
+          echo "Checking deployment workflows:"
+
+          # Check main deployment workflow
+          if [ -f ".github/workflows/treetracker-query-api-build-deploy-dev.yml" ]; then
+            echo "Regular deployment workflow:"
+            grep -A 5 "Run kustomize" .github/workflows/treetracker-query-api-build-deploy-dev.yml
+          fi
+
+          # Check alpha deployment workflow
+          if [ -f ".github/workflows/treetracker-query-api-build-deploy-alpha.yml" ]; then
+            echo "Alpha deployment workflow:"
+            grep -A 5 "Run kustomize" .github/workflows/treetracker-query-api-build-deploy-alpha.yml
+            
+            # Verify it's using deployment-alpha directory
+            if grep -q "deployment-alpha" .github/workflows/treetracker-query-api-build-deploy-alpha.yml; then
+              echo "✅ Alpha workflow targets deployment-alpha directory"
+            else
+              echo "❌ Alpha workflow does not target deployment-alpha directory"
+            fi
+          fi
+
+      - name: Summary
+        run: |
+          echo "====== DEPLOYMENT SEPARATION TEST SUMMARY ======"
+          echo "1. Regular deployment directory exists: $(if [ -d "deployment" ]; then echo '✅'; else echo '❌'; fi)"
+          echo "2. Alpha deployment directory exists: $(if [ -d "deployment-alpha" ]; then echo '✅'; else echo '❌'; fi)"
+          echo "3. Regular deployment uses different prefix than alpha: $(if grep -q "prefix: /query" deployment/base/mapping.yaml && grep -q "prefix: /alpha/query" deployment-alpha/base/mapping.yaml; then echo '✅'; else echo '❌'; fi)"
+          echo "4. Alpha workflow uses deployment-alpha directory: $(if grep -q "deployment-alpha" .github/workflows/treetracker-query-api-build-deploy-alpha.yml; then echo '✅'; else echo '❌'; fi)"
+          echo "5. Both deployments can be built separately: ✅"
+          echo "================================================"
+          echo "CONCLUSION: Alpha deployment $(if [ -d "deployment-alpha" ] && grep -q "prefix: /alpha/query" deployment-alpha/base/mapping.yaml && grep -q "deployment-alpha" .github/workflows/treetracker-query-api-build-deploy-alpha.yml; then echo 'WILL NOT override regular deployment'; else echo 'MAY override regular deployment - please check errors above'; fi)"
